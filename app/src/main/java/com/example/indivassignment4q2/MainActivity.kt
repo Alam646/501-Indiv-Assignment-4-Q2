@@ -12,13 +12,27 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -38,17 +52,16 @@ import kotlinx.coroutines.launch
 // We use a ViewModel to hold the app's data and state.
 // This prevents the counter state from being cleared every time the screen rotates.
 class CounterViewModel : ViewModel() {
-    // Private mutable state flow to hold the counter value.
     private val _count = MutableStateFlow(0)
-
-    // Publicly exposed as an immutable StateFlow for the UI to observe.
     val count = _count.asStateFlow()
 
-    // We add another StateFlow to track the auto-increment mode.
     private val _isAutoIncrementing = MutableStateFlow(false)
     val isAutoIncrementing = _isAutoIncrementing.asStateFlow()
 
-    // This holds a reference to our running coroutine, so we can cancel it later.
+    // State for the auto-increment interval, defaulting to 3 seconds.
+    private val _autoIncrementInterval = MutableStateFlow(3000L)
+    val autoIncrementInterval = _autoIncrementInterval.asStateFlow()
+
     private var autoIncrementJob: Job? = null
 
     fun increment() {
@@ -63,102 +76,177 @@ class CounterViewModel : ViewModel() {
         _count.value = 0
     }
 
-    // This function handles the logic for turning auto-increment on and off.
+    // Updates the interval and restarts the auto-increment job if it's active.
+    fun setInterval(newInterval: Long) {
+        _autoIncrementInterval.value = newInterval
+        if (_isAutoIncrementing.value) {
+            autoIncrementJob?.cancel()
+            startAutoIncrementJob()
+        }
+    }
+
     fun setAutoIncrement(enabled: Boolean) {
-        if (_isAutoIncrementing.value == enabled) return // Avoid redundant work
+        if (_isAutoIncrementing.value == enabled) return
 
         _isAutoIncrementing.value = enabled
         if (enabled) {
-            // We launch a coroutine in the viewModelScope. This scope ensures the coroutine
-            // is automatically cancelled when the ViewModel is cleared, preventing memory leaks.
-            autoIncrementJob = viewModelScope.launch {
-                while (true) {
-                    delay(3000) // Requirement: wait 3 seconds.
-                    increment()
-                }
-            }
+            startAutoIncrementJob()
         } else {
-            // If the user toggles it off, we cancel the job to stop the loop.
             autoIncrementJob?.cancel()
+        }
+    }
+
+    // Extracted the job creation logic to avoid code duplication.
+    private fun startAutoIncrementJob() {
+        autoIncrementJob = viewModelScope.launch {
+            while (true) {
+                delay(autoIncrementInterval.value)
+                increment()
+            }
         }
     }
 }
 
 class MainActivity : ComponentActivity() {
-    // The `by viewModels()` delegate is the standard way to get a ViewModel
-    // that is scoped to the Activity and survives configuration changes.
     private val viewModel: CounterViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             IndivAssignment4Q2Theme {
-                // We replace the default Scaffold/Greeting with our main app composable.
                 CounterApp(viewModel = viewModel)
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CounterApp(viewModel: CounterViewModel = viewModel()) {
-    // `collectAsState` is how we connect our Compose UI to the ViewModel's data.
-    // The UI will automatically update whenever the count value changes.
+    // This state controls whether we show the main screen or the settings screen.
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(if (showSettings) "Settings" else "Counter++") },
+                actions = {
+                    if (!showSettings) {
+                        IconButton(onClick = { showSettings = true }) {
+                            Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        }
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
+        if (showSettings) {
+            val interval by viewModel.autoIncrementInterval.collectAsState()
+            SettingsScreen(
+                modifier = Modifier.padding(paddingValues),
+                currentInterval = interval,
+                onIntervalChange = { viewModel.setInterval(it) },
+                onDone = { showSettings = false } // Callback to go back.
+            )
+        } else {
+            CounterScreen(
+                modifier = Modifier.padding(paddingValues),
+                viewModel = viewModel
+            )
+        }
+    }
+}
+
+@Composable
+fun CounterScreen(modifier: Modifier = Modifier, viewModel: CounterViewModel) {
     val count by viewModel.count.collectAsState()
-    // We also collect the auto-increment state to update the UI accordingly.
     val isAutoIncrementing by viewModel.isAutoIncrementing.collectAsState()
 
-    Scaffold { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+    Column(
+        modifier = modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            text = "Counter",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "$count",
+            fontSize = 48.sp,
+            fontWeight = FontWeight.Light
+        )
+        Spacer(modifier = Modifier.height(32.dp))
+        Row {
+            Button(onClick = { viewModel.decrement() }) {
+                Text("-1")
+            }
+            Spacer(modifier = Modifier.width(16.dp))
+            Button(onClick = { viewModel.increment() }) {
+                Text("+1")
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(onClick = { viewModel.reset() }) {
+            Text("Reset")
+        }
+        Spacer(modifier = Modifier.height(32.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
         ) {
-            Text(
-                text = "Counter",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold
+            Text(text = "Auto-Increment")
+            Spacer(modifier = Modifier.width(8.dp))
+            Switch(
+                checked = isAutoIncrementing,
+                onCheckedChange = { viewModel.setAutoIncrement(it) }
             )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "$count",
-                fontSize = 48.sp,
-                fontWeight = FontWeight.Light
-            )
-            Spacer(modifier = Modifier.height(32.dp))
-            Row {
-                Button(onClick = { viewModel.decrement() }) {
-                    Text("-1")
-                }
-                Spacer(modifier = Modifier.width(16.dp))
-                Button(onClick = { viewModel.increment() }) {
-                    Text("+1")
-                }
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = { viewModel.reset() }) {
-                Text("Reset")
-            }
-            Spacer(modifier = Modifier.height(32.dp))
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(text = "Auto mode: ${if (isAutoIncrementing) "ON" else "OFF"}")
+    }
+}
 
-            // This section adds the UI for the auto-increment feature.
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-            ) {
-                Text(text = "Auto-Increment")
-                Spacer(modifier = Modifier.width(8.dp))
-                Switch(
-                    checked = isAutoIncrementing,
-                    // The switch directly calls the ViewModel to change the state.
-                    onCheckedChange = { viewModel.setAutoIncrement(it) }
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            // This text provides clear status feedback to the user.
-            Text(text = "Auto mode: ${if (isAutoIncrementing) "ON" else "OFF"}")
+@Composable
+fun SettingsScreen(
+    modifier: Modifier = Modifier,
+    currentInterval: Long,
+    onIntervalChange: (Long) -> Unit,
+    onDone: () -> Unit
+) {
+    // This local state tracks the slider's position while the user is dragging it.
+    var sliderPosition by remember { mutableFloatStateOf(currentInterval / 1000f) }
+
+    // This ensures the slider resets its position if the external state changes.
+    LaunchedEffect(currentInterval) {
+        sliderPosition = currentInterval / 1000f
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("Auto-Increment Interval", style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(16.dp))
+        Text("%.1f seconds".format(sliderPosition))
+        Slider(
+            value = sliderPosition,
+            onValueChange = { sliderPosition = it },
+            // To be efficient, we only update the ViewModel when the user finishes dragging.
+            onValueChangeFinished = {
+                onIntervalChange((sliderPosition * 1000).toLong())
+            },
+            valueRange = 1f..10f,
+            steps = 8 // This creates 9 steps for 10 discrete values (1.0, 2.0, ... 10.0)
+        )
+        Spacer(Modifier.height(32.dp))
+        Button(onClick = onDone) {
+            Text("Done")
         }
     }
 }
@@ -168,5 +256,13 @@ fun CounterApp(viewModel: CounterViewModel = viewModel()) {
 fun CounterAppPreview() {
     IndivAssignment4Q2Theme {
         CounterApp()
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun SettingsScreenPreview() {
+    IndivAssignment4Q2Theme {
+        SettingsScreen(currentInterval = 3000L, onIntervalChange = {}, onDone = {})
     }
 }
