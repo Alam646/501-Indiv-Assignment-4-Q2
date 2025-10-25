@@ -62,6 +62,10 @@ class CounterViewModel : ViewModel() {
     private val _autoIncrementInterval = MutableStateFlow(3000L)
     val autoIncrementInterval = _autoIncrementInterval.asStateFlow()
 
+    // New state to hold the countdown value for the UI.
+    private val _countdown = MutableStateFlow(0)
+    val countdown = _countdown.asStateFlow()
+
     private var autoIncrementJob: Job? = null
 
     fun increment() {
@@ -93,14 +97,20 @@ class CounterViewModel : ViewModel() {
             startAutoIncrementJob()
         } else {
             autoIncrementJob?.cancel()
+            _countdown.value = 0 // Reset countdown when turned off
         }
     }
 
-    // Extracted the job creation logic to avoid code duplication.
+    // The auto-increment job now includes countdown logic.
     private fun startAutoIncrementJob() {
         autoIncrementJob = viewModelScope.launch {
             while (true) {
-                delay(autoIncrementInterval.value)
+                val intervalInSeconds = (_autoIncrementInterval.value / 1000).toInt()
+                for (i in intervalInSeconds downTo 1) {
+                    _countdown.value = i
+                    delay(1000)
+                }
+                _countdown.value = 0 // Show 0 briefly before incrementing
                 increment()
             }
         }
@@ -161,6 +171,8 @@ fun CounterApp(viewModel: CounterViewModel = viewModel()) {
 fun CounterScreen(modifier: Modifier = Modifier, viewModel: CounterViewModel) {
     val count by viewModel.count.collectAsState()
     val isAutoIncrementing by viewModel.isAutoIncrementing.collectAsState()
+    // Collect the countdown state to display it.
+    val countdown by viewModel.countdown.collectAsState()
 
     Column(
         modifier = modifier.fillMaxSize(),
@@ -206,6 +218,12 @@ fun CounterScreen(modifier: Modifier = Modifier, viewModel: CounterViewModel) {
         }
         Spacer(modifier = Modifier.height(8.dp))
         Text(text = "Auto mode: ${if (isAutoIncrementing) "ON" else "OFF"}")
+
+        // The countdown timer is only shown when auto-increment is active.
+        if (isAutoIncrementing) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(text = "Next increment in: $countdown s")
+        }
     }
 }
 
